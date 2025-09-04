@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>لعبتي البسيطة</title>
+  <style>
+    body { margin:0; background:black; overflow:hidden; }
+    canvas { display:block; margin:auto; background:#111; }
+    .btn {position:fixed; bottom:20px; padding:20px; font-size:20px; background:#444; color:#fff; border:none; border-radius:10px;}
+    #left {left:20px;} #right {left:100px;} #shoot {right:20px;}
+  </style>
+</head>
+<body>
+  <canvas id="game" width="400" height="600"></canvas>
+  <button id="left" class="btn">◀️</button>
+  <button id="right" class="btn">▶️</button>
+  <button id="shoot" class="btn">🔥</button>
+  <script>
+    const c=document.getElementById("game"),ctx=c.getContext("2d");
+    let player={x:180,y:550,w:40,h:20,color:"lime"};
+    let bullets=[];
+    function draw(){
+      ctx.clearRect(0,0,c.width,c.height);
+      ctx.fillStyle=player.color;
+      ctx.fillRect(player.x,player.y,player.w,player.h);
+      ctx.fillStyle="red";
+      bullets.forEach(b=>ctx.fillRect(b.x,b.y,5,10));
+    }
+    function update(){
+      bullets.forEach(b=>b.y-=5);
+      bullets=bullets.filter(b=>b.y>0);
+    }
+    function loop(){update();draw();requestAnimationFrame(loop);}
+    loop();
+    // controls
+    document.getElementById("left").onclick=()=>player.x-=20;
+    document.getElementById("right").onclick=()=>player.x+=20;
+    document.getElementById("shoot").onclick=()=>bullets.push({x:player.x+18,y:player.y});
+    document.addEventListener("keydown",e=>{
+      if(e.key==="ArrowLeft") player.x-=20;
+      if(e.key==="ArrowRight") player.x+=20;
+      if(e.key===" ") bullets.push({x:player.x+18,y:player.y});
+    });
+  </script>
+</body>
+</html>
