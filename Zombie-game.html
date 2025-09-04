@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>ناجي الزومبي</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a30; --ui:#1ea6ff; --text:#eaf2ff;
+    --good:#2ecc71; --warn:#f1c40f; --bad:#e74c3c;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial}
+  #wrap{display:flex;flex-direction:column;align-items:center;gap:8px;min-height:100%}
+  #hud{width:min(920px,96vw);display:flex;justify-content:space-between;align-items:center;
+       padding:10px 12px;background:var(--panel);border-radius:12px;margin-top:10px}
+  #stats{display:flex;gap:14px;align-items:center;font-size:15px}
+  #health{display:flex;gap:6px}
+  .hcell{width:26px;height:14px;border-radius:3px;background:#333;outline:1px solid #0005}
+  #board{width:min(920px,96vw);aspect-ratio:16/9;background:#050815;border:2px solid #000;position:relative;
+         border-radius:10px;overflow:hidden}
+  canvas{width:100%;height:100%}
+
+  /* أزرار اللمس */
+  #touch{position:fixed;inset:auto 0 10px 0;display:flex;justify-content:space-between;pointer-events:none;
+         width:min(920px,96vw)}
+  .pad{pointer-events:auto;display:flex;gap:10px}
+  .btn{width:64px;height:64px;border:none;border-radius:12px;background:#1b2a45;outline:2px solid #0008;
+       color:var(--text);font-size:22px;font-weight:700;display:flex;align-items:center;justify-content:center;
+       box-shadow:0 6px 18px #0008}
+  .btn:active{transform:scale(.98)}
+  .circle{width:72px;height:72px;border-radius:50%;background:#10365a;position:relative}
+  /* ترسيم الرصاصة على زر الإطلاق */
+  .circle::after{content:"•";position:absolute;inset:0;display:grid;place-items:center;font-size:36px;color:#ffd34a}
+
+  /* نافذة بداية/نهاية */
+  .overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55);}
+  .card{background:var(--panel);border:1px solid #26324e;border-radius:12px;padding:20px 24px;min-width:280px;max-width:92vw;text-align:center}
+  .title{font-size:20px;margin:0 0 10px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+  .btn.primary{background:var(--ui);color:#001}
+  .small{font-size:13px;opacity:.85}
+  .show{display:flex}
+
+  @media (max-width:720px){
+    .btn{width:60px;height:60px}
+    .circle{width:70px;height:70px}
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div id="stats">
+      <div>المرحلة: <b id="lvl">1</b></div>
+      <div>الزمن: <b id="tm">0.0s</b></div>
+      <div>الزومبي: <b id="left">0</b></div>
+    </div>
+    <!-- صحة مربعات: أخضر → أصفر → أحمر -->
+    <div id="health">
+      <div class="hcell" id="h1"></div>
+      <div class="hcell" id="h2"></div>
+      <div class="hcell" id="h3"></div>
+    </div>
+  </div>
+
+  <div id="board">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <!-- قائمة البداية -->
+    <div id="menu" class="overlay show">
+      <div class="card">
+        <h3 class="title">ناجي الزومبي</h3>
+        <div class="row" style="margin-bottom:8px">
+          <button class="btn" data-mode="easy">سهل</button>
+          <button class="btn" data-mode="hard">صعب</button>
+        </div>
+        <div class="small">اختر الصعوبة ثم ابدأ</div>
+        <div class="row">
+          <button id="start" class="btn primary">ابدأ اللعب</button>
+        </div>
+        <hr/>
+        <div class="small" style="text-align:right">
+          <b>لوحة الصدارة (أعلى مرحلة/أقل زمن):</b>
+          <div id="lb" style="text-align:right;white-space:pre-wrap;margin-top:6px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- نهاية اللعبة -->
+    <div id="gameover" class="overlay">
+      <div class="card">
+        <h3 class="title">انتهت اللعبة</h3>
+        <div class="small">أعلى مرحلة وصلت لها: <b id="bestStage">1</b> — زمنك: <b id="finalTime">0.0s</b></div>
+        <div class="row"><button id="again" class="btn primary">العب من جديد</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- أزرار اللمس داخل الشاشة -->
+  <div id="touch">
+    <div class="pad" id="padL">
+      <button class="btn" id="leftBtn">◀︎</button>
+      <button class="btn" id="rightBtn">▶︎</button>
+      <button class="btn" id="upBtn">▲</button>
+      <button class="btn" id="downBtn">▼</button>
+    </div>
+    <div class="pad" id="padR">
+      <button class="btn circle" id="fireBtn" title="إطلاق"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ====== مراجع واجهة المستخدم ====== */
+const cvs = document.getElementById('game');
+const ctx = cvs.getContext('2d');
+
+const UI = {
+  lvl: document.getElementById('lvl'),
+  time: document.getElementById('tm'),
+  left: document.getElementById('left'),
+  hCells: [document.getElementById('h1'),document.getElementById('h2'),document.getElementById('h3')],
+  menu: document.getElementById('menu'),
+  gameover: document.getElementById('gameover'),
+  bestStage: document.getElementById('bestStage'),
+  finalTime: document.getElementById('finalTime'),
+  start: document.getElementById('start'),
+  again: document.getElementById('again'),
+  lb: document.getElementById('lb'),
+};
+
+let difficulty = 'easy'; // easy | hard
+let running = false;
+
+/* ====== عالم اللعبة ====== */
+const rand = (a,b)=>Math.random()*(b-a)+a;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+const world = {
+  w: cvs.width, h: cvs.height,
+  gravity: 0.5,
+  groundY: 460,
+  obstacles: []
+};
+
+const player = {
+  x: 120, y: world.groundY-40, w: 36, h: 40,
+  vx:0, vy:0, speed:3.2,
+  jumping:false,
+  hp:3,
+  bullets:[]
+};
+
+const state = {
+  level:1,
+  zombies:[],
+  zombiesLeft:0,
+  t0:0,
+  elapsed:0,
+  best:{stage:0,time:99999},
+};
+
+/* ====== لوحة الصدارة (localStorage) ====== */
+function loadLB(){
+  const s = localStorage.getItem('z_lb');
+  if(s){ try { state.best = JSON.parse(s); } catch{} }
+  UI.lb.textContent = `مرحلة: ${state.best.stage} — زمن: ${state.best.time.toFixed(1)}s`;
+}
+function saveLB(){
+  if(state.level-1 > state.best.stage || (state.level-1===state.best.stage && state.elapsed < state.best.time)){
+    state.best.stage = state.level-1;
+    state.best.time = state.elapsed;
+    localStorage.setItem('z_lb', JSON.stringify(state.best));
+    loadLB();
+  }
+}
+loadLB();
+
+/* ====== صحة مربعات بالألوان ====== */
+function paintHealth(){
+  // 3 خلايا: أخضر ثم أصفر ثم أحمر
+  const c = ['#333','#333','#333'];
+  if(player.hp>=1) c[2]='var(--bad)';
+  if(player.hp>=2) c[1]='var(--warn)';
+  if(player.hp>=3) c[0]='var(--good)';
+  // نعرضها يمين→يسار
+  UI.hCells[0].style.background=c[0];
+  UI.hCells[1].style.background=c[1];
+  UI.hCells[2].style.background=c[2];
+}
+
+/* ====== العقبات ====== */
+function buildObstacles(){
+  world.obstacles = [];
+  const count = difficulty==='hard'? 8:5;
+  for(let i=0;i<count;i++){
+    const w = rand(50,110);
+    const x = rand(200, world.w-180);
+    world.obstacles.push({x, y: world.groundY-12, w, h:12});
+  }
+}
+
+/* ====== الزومبي (10 × رقم المرحلة) وسرعة تزيد كل مرحلة ====== */
+function currentZombieSpeed(){
+  const base = difficulty==='hard' ? 1.2 : 0.9;
+  const inc  = difficulty==='hard' ? 0.12 : 0.10;  // الزيادة لكل مرحلة
+  return base + inc * state.level;
+}
+function spawnWave(){
+  const n = state.level * 10; // 10، 20، 30 …
+  state.zombies = [];
+  for(let i=0;i<n;i++){
+    const fromLeft = Math.random()<0.5;
+    state.zombies.push({
+      x: fromLeft ? -rand(40,800) : world.w+rand(40,800),
+      y: world.groundY-38, w:34, h:38,
+      vx: fromLeft ? currentZombieSpeed() : -currentZombieSpeed(),
+      vy:0,
+      jumping:false,
+      alive:true
+    });
+  }
+  state.zombiesLeft = n;
+  UI.left.textContent = n;
+}
+
+/* ====== التحكم ====== */
+const keys = {left:false,right:false,up:false,down:false,fire:false};
+function bindHold(el, prop){
+  const on = (e)=>{ e.preventDefault(); keys[prop]=true; };
+  const off= (e)=>{ e.preventDefault(); keys[prop]=false; };
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('mousedown',on);
+  ['touchend','touchcancel','mouseup','mouseleave'].forEach(t=> el.addEventListener(t,off));
+}
+bindHold(document.getElementById('leftBtn'),'left');
+bindHold(document.getElementById('rightBtn'),'right');
+bindHold(document.getElementById('upBtn'),'up');
+bindHold(document.getElementById('downBtn'),'down');
+bindHold(document.getElementById('fireBtn'),'fire');
+
+addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=true;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=true;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=true;
+  if(e.key==='ArrowDown'||e.key==='s') keys.down=true;
+  if(e.code==='Space') keys.fire=true;
+});
+addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') keys.left=false;
+  if(e.key==='ArrowRight'||e.key==='d') keys.right=false;
+  if(e.key==='ArrowUp'||e.key==='w') keys.up=false;
+  if(e.key==='ArrowDown'||e.key==='s') keys.down=false;
+  if(e.code==='Space') keys.fire=false;
+});
+
+/* ====== إطلاق بلا حدود (معدل ثابت عند الضغط المستمر) ====== */
+let fireAccum = 0;             // مؤقّت الإطلاق
+const fireIntervalEasy = 150;  // ms بين الطلقات
+const fireIntervalHard = 100;
+
+function shoot(){
+  // طلقة تتجه أفقياً
+  player.bullets.push({x:player.x+player.w/2,y:player.y+player.h/2, vx: 7.2, r:4});
+}
+
+/* ====== تشغيل/إعادة ====== */
+document.querySelectorAll('[data-mode]').forEach(b=>{
+  b.addEventListener('click',()=>{ difficulty = b.dataset.mode; });
+});
+UI.start.onclick = ()=> startGame();
+UI.again.onclick = ()=> { UI.gameover.classList.remove('show'); UI.menu.classList.add('show'); };
+
+function startGame(){
+  UI.menu.classList.remove('show');
+  running = true;
+  player.x=120; player.y=world.groundY-40; player.vx=0; player.vy=0; player.hp=3; paintHealth();
+  state.level=1; state.elapsed=0; state.t0=performance.now();
+  buildObstacles();
+  spawnWave();
+  last = 0;
+  requestAnimationFrame(loop);
+}
+
+/* ====== تحديث ورسوم ====== */
+function update(dt){
+  // زمن
+  state.elapsed = (performance.now()-state.t0)/1000;
+  UI.time.textContent = state.elapsed.toFixed(1)+'s';
+  UI.lvl.textContent = state.level;
+
+  // حركة اللاعب (الأزرار باتجاهاتها الصحيحة)
+  const sp = player.speed;
+  if(keys.left)  player.vx = -sp;
+  else if(keys.right) player.vx = sp;
+  else player.vx *= 0.85;
+
+  // فوق = قفز، تحت = هبوط سريع بسيط
+  if(keys.up && !player.jumping){ player.vy = -9.5; player.jumping=true; }
+  if(keys.down) player.vy += 0.6; // تسريع السقوط قليلاً
+
+  // إطلاق مستمر بلا حدود طالما الزر مضغوط
+  const targetInterval = (difficulty==='hard'?fireIntervalHard:fireIntervalEasy);
+  fireAccum += dt*1000;
+  if(keys.fire && fireAccum >= targetInterval){ shoot(); fireAccum = 0; }
+
+  // فيزياء اللاعب
+  player.vy += world.gravity;
+  player.x += player.vx;
+  player.y += player.vy;
+
+  // الأرض
+  if(player.y+player.h >= world.groundY){
+    player.y = world.groundY-player.h;
+    player.vy = 0; player.jumping=false;
+  }
+
+  // حدود
+  player.x = clamp(player.x, 0, world.w-player.w);
+
+  // اصطدام العوائق (اللاعب يقف فوقها)
+  for(const ob of world.obstacles){
+    if(rectHit(player, ob)){
+      if(player.y+player.h-8 < ob.y){
+        player.y = ob.y - player.h; player.vy=0; player.jumping=false;
+      }else{
+        if(player.vx>0) player.x = ob.x-player.w-1;
+        else if(player.vx<0) player.x = ob.x+ob.w+1;
+      }
+    }
+  }
+
+  // تحديث الطلقات
+  player.bullets = player.bullets.filter(b=>{
+    b.x += b.vx;
+    return b.x>-20 && b.x<world.w+20;
+  });
+
+  // الزومبي
+  const zSp = currentZombieSpeed(); // سرعة المرحلة الحالية
+  for(const z of state.zombies){
+    if(!z.alive) continue;
+    // اتجاه نحو اللاعب
+    z.vx = (player.x > z.x ? 1 : -1) * zSp;
+    // قفزة عند عائق
+    const hitObs = world.obstacles.some(ob => rectHit({x:z.x, y:z.y, w:z.w, h:z.h}, ob));
+    if(hitObs && !z.jumping){ z.vy = -8.5; z.jumping=true; }
+
+    z.vy += world.gravity;
+    z.x += z.vx;
+    z.y += z.vy;
+    if(z.y+z.h >= world.groundY){ z.y=world.groundY-z.h; z.vy=0; z.jumping=false; }
+
+    // اصطدام لاعب
+    if(rectHit(player,z)){
+      damage(1);
+      player.x += (player.x<z.x? -18: 18);
+    }
+
+    // إصابة برصاصة
+    for(const b of player.bullets){
+      if(circleRectHit(b.x,b.y,b.r,z)){ z.alive=false; state.zombiesLeft--; break; }
+    }
+  }
+
+  // حذف الميت
+  state.zombies = state.zombies.filter(z=>z.alive);
+  UI.left.textContent = state.zombiesLeft;
+
+  // نهاية الموجة → المرحلة التالية (10×n)
+  if(state.zombiesLeft<=0){
+    state.level++;
+    buildObstacles();
+    spawnWave();
+  }
+}
+
+function damage(d){
+  if(!running) return;
+  player.hp -= d;
+  paintHealth();
+  if(player.hp<=0){
+    running=false;
+    saveLB();
+    UI.bestStage.textContent = state.level-1;
+    UI.finalTime.textContent = state.elapsed.toFixed(1)+'s';
+    UI.gameover.classList.add('show');
+  }
+}
+
+function draw(){
+  // خلفية
+  ctx.fillStyle = '#060b18';
+  ctx.fillRect(0,0,world.w,world.h);
+
+  // نجوم
+  ctx.fillStyle = '#9aa8ff22';
+  for(let i=0;i<60;i++){
+    const x = (i*157 % world.w), y = (i*97 % world.h);
+    ctx.fillRect(x,y,2,2);
+  }
+
+  // أرض
+  ctx.fillStyle = '#0a1326';
+  ctx.fillRect(0, world.groundY, world.w, world.h-world.groundY);
+
+  // عوائق
+  ctx.fillStyle = '#1e2f4f';
+  for(const ob of world.obstacles){ ctx.fillRect(ob.x,ob.y,ob.w,ob.h); }
+
+  // لاعب
+  ctx.fillStyle = '#3ef08a';
+  ctx.fillRect(player.x,player.y,player.w,player.h);
+
+  // زومبي
+  ctx.fillStyle = '#ff4d4d';
+  for(const z of state.zombies){ ctx.fillRect(z.x,z.y,z.w,z.h); }
+
+  // رصاص
+  ctx.fillStyle = '#ffd34a';
+  for(const b of player.bullets){
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+let last=0;
+function loop(ts=0){
+  if(!running) return;
+  const dt = Math.min(32, ts-last||16)/16.666; // عامل الإطار
+  last = ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* ====== أدوات اصطدام ====== */
+function rectHit(a,b){
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+function circleRectHit(cx,cy,r,rect){
+  const testX = clamp(cx, rect.x, rect.x+rect.w);
+  const testY = clamp(cy, rect.y, rect.y+rect.h);
+  const dx = cx-testX, dy = cy-testY;
+  return dx*dx+dy*dy <= r*r;
+}
+</script>
+</body>
+</html>
