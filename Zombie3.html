@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>لعبة الزومبي</title>
+<style>
+  :root{
+    --line:#9aa0a6;      /* لون حدود أزرار الاتجاهات */
+    --ui:#00d18f;        /* لون تمييز للأزرار */
+    --bg:#0b0f16;        /* خلفية */
+    --text:#e6eef7;      /* نص */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial}
+  #game{display:block;width:100vw;height:100vh;background:#050a13}
+  /* ======= شريط الصحة (3 مربعات) ======= */
+  .health{position:fixed;top:12px;left:12px;display:flex;gap:8px;z-index:5}
+  .hp{width:26px;height:18px;border:2px solid #2b3445;border-radius:4px;background:#00c853} /* أخضر */
+  .hp.warn {background:#ffeb3b;}        /* أصفر */
+  .hp.crit {background:#ff5252;}        /* أحمر */
+  /* ======= D-Pad زي الصورة ======= */
+  .controls{position:fixed;inset:auto 0 0 0;pointer-events:none;z-index:6}
+  .dpad{
+    position:absolute;left:16px;bottom:16px;width:168px;height:168px;
+    display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);
+    gap:12px;pointer-events:none;
+  }
+  .key{pointer-events:auto;background:transparent;border:2px solid var(--line);
+    border-radius:10px;position:relative;display:flex;align-items:center;justify-content:center;}
+  .key::after{content:"";width:0;height:0;border:10px solid transparent;opacity:.9}
+  .key.up   {grid-area:1/2}
+  .key.down {grid-area:3/2}
+  .key.left {grid-area:2/1}
+  .key.right{grid-area:2/3}
+  .key.up::after    {border-bottom-color:var(--line);}
+  .key.down::after  {border-top-color:var(--line);}
+  .key.left::after  {border-right-color:var(--line);}
+  .key.right::after {border-left-color:var(--line);}
+  .key:active{transform:scale(.96);border-color:#c7ccd1}
+  /* زر إطلاق النار */
+  .shoot{
+    position:absolute;right:18px;bottom:24px;width:82px;height:82px;
+    pointer-events:auto;border:0;border-radius:50%;background:rgba(255,255,255,.06);
+    outline:2px solid var(--ui);outline-offset:-2px;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 0 2px rgba(0,0,0,.35), 0 6px 20px rgba(0,0,0,.35);
+  }
+  .shoot::after{
+    content:"";width:36px;height:6px;border-radius:4px;background:var(--ui);
+    box-shadow:12px 0 0 0 rgba(255,255,255,.25) inset;
+  }
+  /* تعليمات بسيطة */
+  .hud{position:fixed;top:12px;right:14px;font-size:14px;opacity:.9;z-index:5;text-align:right}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- HUD -->
+<div class="health" id="health">
+  <div class="hp" id="h1"></div>
+  <div class="hp" id="h2"></div>
+  <div class="hp" id="h3"></div>
+</div>
+<div class="hud">
+  <div>المرحلة: <span id="wave">1</span></div>
+  <div>الزومبي المتبقّي: <span id="left">0</span></div>
+  <div>الزمن: <span id="time">0.0</span>s</div>
+</div>
+
+<!-- Controls -->
+<div class="controls" aria-hidden="false">
+  <div class="dpad">
+    <button class="key up"    id="btnUp"    aria-label="أعلى"></button>
+    <button class="key left"  id="btnLeft"  aria-label="يسار"></button>
+    <button class="key right" id="btnRight" aria-label="يمين"></button>
+    <button class="key down"  id="btnDown"  aria-label="أسفل"></button>
+  </div>
+  <button class="shoot" id="btnShoot" aria-label="إطلاق"></button>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  let W, H;
+  function resize(){ W=canvas.width=innerWidth*devicePixelRatio; H=canvas.height=innerHeight*devicePixelRatio; ctx.setTransform(1,0,0,1,0,0); ctx.scale(devicePixelRatio, devicePixelRatio);}
+  addEventListener('resize', resize,{passive:true}); resize();
+
+  // ========= الحالة =========
+  const keys = {left:false,right:false,up:false,down:false,shoot:false};
+  const player = {x:innerWidth*0.5, y:innerHeight*0.72, w:28, h:28, speed:3.2, health:3, invul:0};
+  let bullets = [];
+  let zombies = [];
+  let wave = 1;
+  let timeStart = performance.now();
+  let lastShot = 0;
+
+  const waveEl = document.getElementById('wave');
+  const leftEl = document.getElementById('left');
+  const timeEl = document.getElementById('time');
+
+  // ========= أدوات =========
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function rects(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.h+a.y>b.y;}
+  function spawnWave(n){
+    zombies.length=0;
+    for(let i=0;i<n;i++){
+      const side = Math.random()<.5 ? 'L':'R';
+      const speed = 1.1 + wave*0.15 + Math.random()*0.6;   // السرعة تزيد كل مرحلة
+      const size = 24 + Math.random()*10;
+      zombies.push({
+        x: side==='L' ? -40 - Math.random()*200 : innerWidth+40 + Math.random()*200,
+        y: innerHeight*0.72 + (Math.random()*60-30),
+        w:size,h:size,speed,dir: side==='L'?1:-1,hp:1 + (wave>6?1:0)
+      });
+    }
+    waveEl.textContent = wave;
+  }
+
+  function updateHealthUI(){
+    const bars=[h1,h2,h3];
+    for(let i=0;i<3;i++){
+      bars[i].className='hp';
+      if(i>=player.health) bars[i].style.opacity=.18; else bars[i].style.opacity=1;
+    }
+    // ألوان تدريجية حسب المتبقي
+    if(player.health===3){ /* أخضر */ }
+    if(player.health===2){ h3.classList.add('warn'); }
+    if(player.health===1){ h2.classList.add('crit'); h3.classList.add('crit'); }
+  }
+
+  function damagePlayer(){
+    if(player.invul>0) return;
+    player.health--;
+    player.invul = 60; // فريمات حصانة قصيرة بعد الضربة
+    updateHealthUI();
+    if(player.health<=0){ gameOver(); }
+  }
+
+  function gameOver(){
+    alert('انتهت اللعبة! وصلت للمرحلة: '+wave);
+    // إعادة ضبط
+    wave=1; player.health=3; updateHealthUI(); timeStart = performance.now();
+    spawnWave(10);
+  }
+
+  // أول Wave: 10 زومبي وتزيد +10 كل مرحلة (حتى 10 مراحل)
+  spawnWave(10);
+
+  // ========= إدخال (كيبورد + لمس للأزرار) =========
+  const map = {ArrowLeft:'left',ArrowRight:'right',ArrowUp:'up',ArrowDown:'down',' ':'shoot'};
+  addEventListener('keydown',e=>{ if(map[e.key]!=null){ keys[map[e.key]]=true; e.preventDefault(); }});
+  addEventListener('keyup',e=>{ if(map[e.key]!=null){ keys[map[e.key]]=false; e.preventDefault(); }});
+
+  // ربط أزرار الشاشة
+  function bindHold(btn, prop){
+    const on = ()=>keys[prop]=true;
+    const off= ()=>keys[prop]=false;
+    btn.addEventListener('touchstart', e=>{e.preventDefault();on();},{passive:false});
+    btn.addEventListener('touchend',   e=>{e.preventDefault();off();},{passive:false});
+    btn.addEventListener('mousedown',  e=>{e.preventDefault();on();});
+    btn.addEventListener('mouseup',    e=>{e.preventDefault();off();});
+    btn.addEventListener('mouseleave', e=>{off();});
+  }
+  bindHold(btnLeft,'left');
+  bindHold(btnRight,'right');
+  bindHold(btnUp,'up');
+  bindHold(btnDown,'down');
+  bindHold(btnShoot,'shoot');
+
+  // ========= حلقة اللعبة =========
+  function tick(){
+    requestAnimationFrame(tick);
+    // خلفية
+    ctx.clearRect(0,0,innerWidth,innerHeight);
+
+    // حركة اللاعب
+    let vx = (keys.right?1:0) - (keys.left?1:0);
+    let vy = (keys.down?1:0) - (keys.up?1:0);
+    const len = Math.hypot(vx,vy)||1;
+    vx = vx/len * player.speed;
+    vy = vy/len * player.speed;
+
+    player.x = clamp(player.x + vx, 8, innerWidth-8-player.w);
+    player.y = clamp(player.y + vy, innerHeight*0.2, innerHeight-10-player.h);
+
+    // إطلاق مستمر عند الضغط (بدون حدود)
+    const now = performance.now();
+    if(keys.shoot && now - lastShot > 120){ // معدل إطلاق بسيط
+      bullets.push({x:player.x+player.w/2-3, y:player.y-4, w:6,h:10, vy:-7});
+      lastShot = now;
+    }
+
+    // تحديث الرصاص
+    for(let i=bullets.length-1;i>=0;i--){
+      const b=bullets[i]; b.y+=b.vy;
+      if(b.y<-20) bullets.splice(i,1);
+    }
+
+    // تحديث الزومبي
+    for(let i=zombies.length-1;i>=0;i--){
+      const z=zombies[i];
+      z.x += z.dir*z.speed;
+      // تصادم مع اللاعب
+      if(rects({...player}, z)){
+        zombies.splice(i,1);
+        damagePlayer();
+        continue;
+      }
+      // تصادم الرصاص
+      let hit=false;
+      for(let j=bullets.length-1;j>=0;j--){
+        if(rects(z, bullets[j])){ bullets.splice(j,1); z.hp--; if(z.hp<=0){hit=true;break;} }
+      }
+      if(hit) zombies.splice(i,1);
+    }
+
+    // إنهاء المرحلة والانتقال
+    leftEl.textContent = zombies.length;
+    const elapsed = (performance.now()-timeStart)/1000;
+    timeEl.textContent = elapsed.toFixed(1);
+
+    if(zombies.length===0){
+      wave++;
+      const count = Math.min(10*wave, 10*10); // حتى 10 مراحل (أقصى 100 زومبي)
+      spawnWave(count);
+    }
+
+    // رسم اللاعب
+    if(player.invul>0) player.invul--;
+    ctx.fillStyle = player.invul>0 ? '#88e' : '#4dd0e1';
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+
+    // رسم الرصاص
+    ctx.fillStyle = '#ffd54f';
+    bullets.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
+
+    // رسم الزومبي
+    ctx.fillStyle = '#ff5252';
+    zombies.forEach(z=>{
+      ctx.fillRect(z.x,z.y,z.w,z.h);
+      // عين بسيطة
+      ctx.fillStyle='#111'; ctx.fillRect(z.x+z.w*.25,z.y+6,4,6); ctx.fillRect(z.x+z.w*.65,z.y+6,4,6);
+      ctx.fillStyle='#ff5252';
+    });
+  }
+  updateHealthUI();
+  tick();
+})();
+</script>
+</body>
+</html>
