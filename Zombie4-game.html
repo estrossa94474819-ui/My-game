@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>ناجي الزومبي</title>
+<style>
+  :root{ --bg:#0b0f16; --panel:#121a30; --ui:#00d18f; --text:#e6eef7; --warn:#e03b3b; }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Arial;}
+  #game{display:block;width:100vw;height:100vh;background:#050a13;touch-action:none;}
+
+  /* HUD */
+  .overlay{position:fixed;inset:0;pointer-events:none}
+  .topbar{position:absolute;left:12px;top:10px;display:flex;gap:8px;align-items:center}
+  .hearts{display:flex;gap:6px}
+  .heart{width:24px;height:24px;border:2px solid #2b3445;border-radius:6px;background:#e03b3b;box-shadow:inset 0 0 0 3px #8a1010}
+  .heart.lost{background:#2a2f3d;box-shadow:none}
+  .stage{position:absolute;right:12px;top:10px;background:#0e1c36;border:1px solid #23324f;padding:8px 10px;border-radius:10px;font-size:14px;line-height:1.1;display:flex;gap:8px}
+  .stage b{color:#8dc6ff}
+
+  /* Start screen */
+  .start{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(180deg,#0a1426,rgba(10,20,38,.85)), url('') center/cover no-repeat;z-index:10}
+  .start .box{pointer-events:auto;background:#0f1e3a;border:1px solid #263a70;border-radius:18px;padding:26px 22px;width:min(520px,92vw);text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .start h1{margin:0 0 8px;font-size:28px;letter-spacing:.5px}
+  .start p{margin:0 0 16px;opacity:.85}
+  .start .row{display:flex;justify-content:center;gap:10px;margin-top:8px;opacity:.85}
+  .start .badge{border:1px solid #334a89;border-radius:10px;padding:6px 10px;font-size:13px}
+  .start button{margin-top:16px;cursor:pointer;border:2px solid #167a66;background:#0c2b27;color:#eafff8;
+                font-weight:800;font-size:18px;padding:12px 22px;border-radius:14px}
+  .start button:active{transform:translateY(1px)}
+
+  /* Controls */
+  .controls{position:fixed;inset:0;pointer-events:none}
+  .joy{position:absolute;left:18px;bottom:22px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.05);border:2px solid #666;pointer-events:auto}
+  .joy .knob{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:84px;height:84px;border-radius:50%;border:2px solid #aaa;background:rgba(255,255,255,.08)}
+  .rightcol{position:absolute;right:18px;bottom:22px;display:flex;align-items:flex-end;gap:18px;pointer-events:none}
+  .stack{display:flex;flex-direction:column;gap:14px;pointer-events:auto}
+  .btn{width:78px;height:78px;border-radius:50%;border:2px solid #2b3445;background:#0e1c36;color:#fff;font-size:28px;font-weight:700;display:grid;place-items:center}
+  .btn.big{width:112px;height:112px;font-size:34px}
+  .btn.green{background:#0e1c36;border-color:#1d7f6c}
+  .btn.green::after{content:"🆙"}
+  .btn.red{background:#301316;border-color:#9b2e2e}
+  .btn.red::after{content:"⚔️"}
+  .btn.fire{background:#14203a;border-color:#2b3f72}
+  .btn.fire span{pointer-events:none}
+  @media (max-width:520px){ .joy{width:130px;height:130px}.joy .knob{width:70px;height:70px}.btn{width:66px;height:66px;font-size:24px}.btn.big{width:96px;height:96px} }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- HUD -->
+<div class="overlay">
+  <div class="topbar"><div class="hearts" id="hearts"></div></div>
+  <div class="stage" id="stageBox"><div>مرحلة: <b id="lvl">1</b></div><div>متبقّي: <b id="left">10</b></div></div>
+</div>
+
+<!-- START SCREEN -->
+<div class="start" id="start">
+  <div class="box">
+    <h1>ناجي الزومبي</h1>
+    <p>حرّك بالـJoystick، أطلق 🔫، اقفز 🆙، وبدّل سلاحك ⚔️</p>
+    <div class="row">
+      <div class="badge">٣ قلوب حياة</div>
+      <div class="badge">٤ مراحل (10 ← 40 زومبي)</div>
+      <div class="badge">يزيدون سرعة كل مرحلة</div>
+    </div>
+    <button id="startBtn">ابدأ</button>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="controls">
+  <div class="joy" id="joy"><div class="knob" id="knob"></div></div>
+  <div class="rightcol">
+    <div class="stack">
+      <button id="btnSwitch" class="btn red" aria-label="تبديل السلاح"></button>
+      <button id="btnJump" class="btn green" aria-label="قفز"></button>
+    </div>
+    <button id="btnFire" class="btn big fire" aria-label="إطلاق نار"><span>🔫</span></button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+  const heartsBox = document.getElementById('hearts');
+  const lvlEl = document.getElementById('lvl'), leftEl = document.getElementById('left');
+
+  /* === World & Player === */
+  let W = innerWidth, H = innerHeight;
+  const GROUND = () => H*0.78, gravity = 0.8;
+
+  const player = { x:0, y:0, w:22, h:46, vx:0, vy:0, speed:4, onGround:true, dir:1, hearts:3, invUntil:0, weapon:'gun' };
+  let obstacles = [], enemies = [], bullets = [];
+  const MAX_LEVEL = 4;
+  let level = 1, toSpawn = 10, spawnCooldown = 0, killsThisLevel = 0;
+
+  /* === Start Screen === */
+  let started = false;
+  const startEl = document.getElementById('start');
+  const startBtn = document.getElementById('startBtn');
+  startBtn.addEventListener('click', startGame);
+
+  function startGame(){
+    // reset state
+    level = 1; toSpawn = 10; spawnCooldown = 0; enemies = []; bullets = [];
+    player.x = W*0.5; player.y = GROUND()-player.h - 2; player.vx = player.vy = 0; player.dir = 1; player.hearts = 3; player.weapon='gun';
+    renderHearts();
+    lvlEl.textContent = level; leftEl.textContent = toSpawn;
+    started = true;
+    startEl.style.display = 'none';
+  }
+
+  /* === UI Controls === */
+  const joy = document.getElementById('joy'), knob = document.getElementById('knob');
+  const btnFire = document.getElementById('btnFire'), btnJump = document.getElementById('btnJump'), btnSwitch = document.getElementById('btnSwitch');
+
+  btnFire.addEventListener('click', ()=> started && shoot());
+  btnJump.addEventListener('click', ()=> started && jump());
+  btnSwitch.addEventListener('click', ()=>{ if(!started) return; player.weapon = (player.weapon==='gun'?'sword':'gun'); btnFire.querySelector('span').textContent = (player.weapon==='gun'?'🔫':'🗡️'); });
+
+  const keys = {};
+  addEventListener('keydown', e=>{ keys[e.key]=true; if(!started) return; if(e.key===' ') shoot(); if(e.key==='Shift') btnSwitch.click(); if(e.key==='ArrowUp') jump(); });
+  addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+  /* === Helpers === */
+  const now = ()=>performance.now();
+  function rnd(a,b){return Math.random()*(b-a)+a;}
+  function resize(){
+    W = innerWidth; H = innerHeight; cvs.width = W; cvs.height = H;
+    const g = GROUND();
+    obstacles = [
+      {x: W*0.25, y: g-24, w: 80, h: 24},
+      {x: W*0.52, y: g-36, w: 90, h: 36},
+      {x: W*0.78, y: g-20, w: 70, h: 20},
+    ];
+    if(!started){ player.x = W*0.5; player.y = g - player.h - 2; }
+  }
+  addEventListener('resize', resize, {passive:true}); resize();
+
+  function renderHearts(){ heartsBox.innerHTML=''; for(let i=0;i<3;i++){ const d=document.createElement('div'); d.className='heart'+(i>=player.hearts?' lost':''); heartsBox.appendChild(d);} }
+  renderHearts();
+
+  /* === Joystick === */
+  let joyActive=false, joyBase={x:0,y:0}, joyVec={x:0,y:0};
+  function setKnob(dx,dy){ const R=joy.clientWidth*0.5 - knob.clientWidth*0.5; const len=Math.hypot(dx,dy)||1; const clamped=Math.min(R,len); const nx=dx/len, ny=dy/len; const kx=nx*clamped, ky=ny*clamped; knob.style.transform=`translate(${kx-0.5*knob.clientWidth}px, ${ky-0.5*knob.clientHeight}px) translate(50%,50%)`; joyVec.x = Math.max(-1,Math.min(1,(dx/(joy.clientWidth*0.5))||0)); }
+  function resetKnob(){ knob.style.transform='translate(-50%,-50%)'; joyVec.x=0; }
+  function ptrPos(e,el){ const r=el.getBoundingClientRect(); const p=(e.touches?e.touches[0]:e); return {x:p.clientX-r.left,y:p.clientY-r.top}; }
+  function joyStart(e){ e.preventDefault(); joyActive=true; joyBase=ptrPos(e,joy); setKnob(0,0); }
+  function joyMove(e){ if(!joyActive) return; e.preventDefault(); const p=ptrPos(e,joy); setKnob(p.x-joyBase.x,p.y-joyBase.y); }
+  function joyEnd(){ joyActive=false; resetKnob(); }
+  joy.addEventListener('touchstart', joyStart, {passive:false});
+  joy.addEventListener('touchmove', joyMove, {passive:false});
+  joy.addEventListener('touchend', joyEnd, {passive:false});
+  joy.addEventListener('mousedown', joyStart); addEventListener('mousemove', joyMove); addEventListener('mouseup', joyEnd);
+
+  /* === Gameplay === */
+  function jump(){ if(player.onGround){ player.vy = -12.5; player.onGround=false; } }
+  function shoot(){
+    if(player.weapon==='gun'){ bullets.push({x:player.x + player.dir*18, y:player.y-8, vx:player.dir*10, life:140}); }
+    else{ const range=40; enemies.forEach(en=>{ if(!en.alive) return; const d=Math.hypot(en.x-(player.x+player.dir*20),(en.y-player.y)); if(d<range) en.alive=false, killsThisLevel++; }); }
+  }
+  function spawnEnemy(){
+    const side = Math.random()<0.5?-1:1;
+    const speed = 1.2 + (level-1)*0.45 + rnd(0,0.3);
+    enemies.push({ x: side<0?-20:W+20, y: GROUND()-40, w:20, h:44, vx:-side*speed, vy:0, alive:true, onGround:true, dir: side<0?1:-1, jumpCd:0 });
+  }
+  function enemyAI(en){
+    en.dir = player.x > en.x ? 1 : -1;
+    en.vx = en.dir * (1.0 + (level-1)*0.45);
+    en.vy += gravity;
+    // jump over obstacles
+    if(en.onGround && en.jumpCd<=0){
+      for(const o of obstacles){
+        const ahead = en.x + en.dir*14;
+        if(ahead > o.x-10 && ahead < o.x+o.w+10){ en.vy=-10.5; en.onGround=false; en.jumpCd=30; break; }
+      }
+    }
+    en.jumpCd--;
+  }
+  function physicsEntity(e){
+    e.x += e.vx;
+    if(e.x<0) e.x=0; if(e.x>W-e.w) e.x=W-e.w;
+    e.vy += gravity; e.y += e.vy;
+    if(e.y+e.h>GROUND()){ e.y=GROUND()-e.h; e.vy=0; e.onGround=true; } else e.onGround=false;
+    for(const o of obstacles){
+      if(e.x+e.w>o.x && e.x<o.x+o.w && e.y+e.h>o.y && e.y+e.h<o.y+o.h+22 && e.vy>=0){
+        e.y=o.y-e.h; e.vy=0; e.onGround=true;
+      }
+    }
+  }
+
+  function collideRect(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+  function drawStick(x,y,dir,armsUp=false){
+    ctx.save(); ctx.translate(x,y); ctx.scale(dir,1); ctx.lineWidth=3; ctx.strokeStyle='#cfd8ff';
+    ctx.beginPath(); ctx.arc(0,-28,8,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-20); ctx.lineTo(0,6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,6); ctx.lineTo(-10,24); ctx.moveTo(0,6); ctx.lineTo(10,24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-8); ctx.lineTo(armsUp? 14:12, armsUp?-28:-2); ctx.moveTo(0,-8); ctx.lineTo(-12,-2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#0e1c22'; ctx.fillRect(0,GROUND(),W,H-GROUND());
+    ctx.fillStyle='#18283c'; obstacles.forEach(o=>ctx.fillRect(o.x,o.y,o.w,o.h));
+    drawStick(player.x+player.w/2, player.y+player.h/2, player.dir, player.weapon==='sword');
+    ctx.strokeStyle='#e6eef7'; ctx.lineWidth=3;
+    if(player.weapon==='gun'){ ctx.beginPath(); const px=player.x+(player.dir>0?18:2), py=player.y-4; ctx.rect(px,py,14*player.dir,6); ctx.stroke(); }
+    else{ ctx.beginPath(); const sx=player.x+(player.dir>0?22:-2), sy=player.y-16; ctx.moveTo(sx,sy); ctx.lineTo(sx+10*player.dir, sy+26); ctx.stroke(); }
+    enemies.forEach(en=> drawStick(en.x+en.w/2, en.y+en.h/2, en.dir));
+    ctx.fillStyle='#f5e05d'; bullets.forEach(b=>{ ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill(); });
+  }
+
+  function gameOver(){
+    started = false;
+    startEl.style.display = 'grid';
+    startEl.querySelector('h1').textContent = 'انتهت اللعبة';
+    startEl.querySelector('p').textContent  = 'حاول مجددًا واهزم كل المراحل';
+    startEl.querySelector('button').textContent = 'ابدأ مجددًا';
+  }
+  function win(){
+    started = false;
+    startEl.style.display = 'grid';
+    startEl.querySelector('h1').textContent = 'أحسنت! أنهيت كل المراحل 🎉';
+    startEl.querySelector('p').textContent  = 'تبي جولة ثانية؟';
+    startEl.querySelector('button').textContent = 'ابدأ من جديد';
+  }
+
+  function update(){
+    requestAnimationFrame(update);
+
+    // always draw scene
+    draw();
+
+    if(!started) return; // موقوف على شاشة البدء
+
+    // input move
+    let axis = joyVec.x;
+    if(keys['ArrowLeft']||keys['a']) axis -= 1;
+    if(keys['ArrowRight']||keys['d']) axis += 1;
+    axis = Math.max(-1,Math.min(1,axis));
+    player.vx = axis * player.speed;
+    if(axis!==0) player.dir = axis>0?1:-1;
+
+    // player physics
+    player.vy += gravity; player.x += player.vx; player.y += player.vy;
+    if(player.x<0) player.x=0; if(player.x>W-player.w) player.x=W-player.w;
+    if(player.y+player.h>GROUND()){ player.y=GROUND()-player.h; player.vy=0; player.onGround=true; } else player.onGround=false;
+    for(const o of obstacles){
+      if(player.x+player.w>o.x && player.x<o.x+o.w && player.y+player.h>o.y && player.y+player.h<o.y+o.h+22 && player.vy>=0){
+        player.y=o.y-player.h; player.vy=0; player.onGround=true;
+      }
+    }
+
+    // bullets
+    bullets = bullets.filter(b=>{ b.x+=b.vx; b.life--; return b.life>0 && b.x>-40 && b.x<W+40; });
+
+    // enemies
+    for(const en of enemies){
+      if(!en.alive) continue;
+      enemyAI(en); physicsEntity(en);
+      if(player.invUntil < now() && collideRect({x:player.x,y:player.y,w:player.w,h:player.h},{x:en.x,y:en.y,w:en.w,h:en.h})){
+        player.hearts--; renderHearts(); player.invUntil = now()+900;
+        if(player.hearts<=0){ gameOver(); return; }
+      }
+    }
+    for(const b of bullets){
+      for(const en of enemies){
+        if(!en.alive) continue;
+        if(Math.abs(b.x-(en.x+en.w/2))<en.w/2+6 && Math.abs(b.y-(en.y+en.h/2))<en.h/2){ en.alive=false; b.life=0; killsThisLevel++; }
+      }
+    }
+    enemies = enemies.filter(e=>e.alive);
+
+    // spawn & level
+    if(toSpawn>0 && spawnCooldown<=0){ spawnEnemy(); toSpawn--; spawnCooldown=22; } else spawnCooldown--;
+    leftEl.textContent = (toSpawn + enemies.length).toString();
+    if(toSpawn===0 && enemies.length===0){
+      if(level<MAX_LEVEL){ level++; lvlEl.textContent=level; toSpawn=10*level; killsThisLevel=0; }
+      else{ win(); return; }
+    }
+  }
+
+  update();
+})();
+</script>
+</body>
+</html>
